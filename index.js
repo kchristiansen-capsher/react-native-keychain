@@ -4,9 +4,11 @@ import { NativeModules, Platform } from 'react-native';
 const { RNKeychainManager } = NativeModules;
 
 export const SECURITY_LEVEL = Object.freeze({
-  ANY: RNKeychainManager.SECURITY_LEVEL_ANY,
-  SECURE_SOFTWARE: RNKeychainManager.SECURITY_LEVEL_SECURE_SOFTWARE,
-  SECURE_HARDWARE: RNKeychainManager.SECURITY_LEVEL_SECURE_HARDWARE,
+  ANY: RNKeychainManager && RNKeychainManager.SECURITY_LEVEL_ANY,
+  SECURE_SOFTWARE:
+    RNKeychainManager && RNKeychainManager.SECURITY_LEVEL_SECURE_SOFTWARE,
+  SECURE_HARDWARE:
+    RNKeychainManager && RNKeychainManager.SECURITY_LEVEL_SECURE_HARDWARE,
 });
 
 export const ACCESSIBLE = Object.freeze({
@@ -118,7 +120,7 @@ const AUTH_PROMPT_DEFAULTS = {
   cancel: 'Cancel',
 };
 
-function normalizeServiceOption(serviceOrOptions?: string | Options) {
+function normalizeServiceOption(serviceOrOptions?: string | Options): Options {
   if (typeof serviceOrOptions === 'string') {
     console.warn(
       `You passed a service string as an argument to one of the react-native-keychain functions.
@@ -212,6 +214,14 @@ export function resetGenericPassword(
 ): Promise<boolean> {
   const options = normalizeOptions(serviceOrOptions);
   return RNKeychainManager.resetGenericPasswordForOptions(options);
+}
+
+/**
+ * Gets all `service` keys used in keychain entries.
+ * @return {Promise} Resolves to an array of strings
+ */
+ export async function getAllGenericPasswordServices(): Promise<string[]> {
+  return RNKeychainManager.getAllGenericPasswordServices();
 }
 
 /**
@@ -385,6 +395,7 @@ export default {
   setGenericPassword,
   getGenericPassword,
   getGenericMTPassword,
+  getAllGenericPasswordServices,
   resetGenericPassword,
   requestSharedWebCredentials,
   setSharedWebCredentials,
