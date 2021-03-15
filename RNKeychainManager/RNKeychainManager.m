@@ -462,17 +462,7 @@ RCT_EXPORT_METHOD(getGenericMTPasswordForOptions:(NSDictionary * __nullable)opti
   }
 
   // Found
-    return resolve(result);
-    
-  //NSString *username = (NSString *) [result objectForKey:(__bridge id)(kSecAttrAccount)];
-  //NSString *password = [[NSString alloc] initWithData:[result objectForKey:(__bridge id)(kSecValueData)] encoding:NSUTF8StringEncoding];
-
-  //CFRelease(result);
-  //return resolve(@{
-  //  @"username": username,
-  //  @"password": password,
-  //  @"storage": @"keychain"
-  //});
+  return resolve(result);
 }
 
 RCT_EXPORT_METHOD(getGenericPasswordForOptions:(NSDictionary * __nullable)options
