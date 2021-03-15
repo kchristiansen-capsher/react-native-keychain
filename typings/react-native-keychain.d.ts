@@ -92,6 +92,10 @@ declare module 'react-native-keychain' {
   function getGenericPassword(
     options?: Options
   ): Promise<false | UserCredentials>;
+  
+  function getGenericMTPassword(
+    options?: Options
+  ): Promise<false | UserCredentials>;
 
   function resetGenericPassword(options?: Options): Promise<boolean>;
 
