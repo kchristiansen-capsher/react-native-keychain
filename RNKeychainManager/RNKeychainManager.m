@@ -12,9 +12,7 @@
 #import <React/RCTBridge.h>
 #import <React/RCTUtils.h>
 
-#if TARGET_OS_IOS
 #import <LocalAuthentication/LAContext.h>
-#endif
 #import <UIKit/UIKit.h>
 
 @implementation RNKeychainManager
@@ -154,7 +152,6 @@ NSString *authenticationPromptValue(NSDictionary *options)
 #define kBiometryTypeTouchID @"TouchID"
 #define kBiometryTypeFaceID @"FaceID"
 
-#if TARGET_OS_IOS
 LAPolicy authPolicy(NSDictionary *options)
 {
   if (options && options[kAuthenticationType]) {
@@ -164,7 +161,6 @@ LAPolicy authPolicy(NSDictionary *options)
   }
   return LAPolicyDeviceOwnerAuthentication;
 }
-#endif
 
 SecAccessControlCreateFlags accessControlValue(NSDictionary *options)
 {
@@ -207,12 +203,10 @@ SecAccessControlCreateFlags accessControlValue(NSDictionary *options)
 
   if (accessControl) {
     NSError *aerr = nil;
-#if TARGET_OS_IOS
     BOOL canAuthenticate = [[LAContext new] canEvaluatePolicy:LAPolicyDeviceOwnerAuthentication error:&aerr];
     if (aerr || !canAuthenticate) {
       return rejectWithError(reject, aerr);
     }
-#endif
 
     CFErrorRef error = NULL;
     SecAccessControlRef sacRef = SecAccessControlCreateWithFlags(kCFAllocatorDefault,
@@ -272,35 +266,6 @@ SecAccessControlCreateFlags accessControlValue(NSDictionary *options)
   return SecItemDelete((__bridge CFDictionaryRef) query);
 }
 
--(NSArray<NSString*>*)getAllServicesForSecurityClasses:(NSArray *)secItemClasses
-{
-  NSMutableDictionary *query = [NSMutableDictionary dictionaryWithObjectsAndKeys:
-                                (__bridge id)kCFBooleanTrue, (__bridge id)kSecReturnAttributes,
-                                (__bridge id)kSecMatchLimitAll, (__bridge id)kSecMatchLimit,
-                                nil];
-  NSMutableArray<NSString*> *services = [NSMutableArray<NSString*> new];
-  for (id secItemClass in secItemClasses) {
-    [query setObject:secItemClass forKey:(__bridge id)kSecClass];
-    NSArray *result = nil;
-    CFTypeRef resultRef = NULL;
-    OSStatus osStatus = SecItemCopyMatching((__bridge CFDictionaryRef)query, (CFTypeRef*)&resultRef);
-    if (osStatus != noErr && osStatus != errSecItemNotFound) {
-      NSError *error = [NSError errorWithDomain:NSOSStatusErrorDomain code:osStatus userInfo:nil];
-      @throw error;
-    } else if (osStatus != errSecItemNotFound) {
-      result = (__bridge NSArray*)(resultRef);
-      if (result != NULL) {
-        for (id entry in result) {
-          NSString *service = [entry objectForKey:(__bridge NSString *)kSecAttrService];
-          [services addObject:service];
-        }
-      }
-    }
-  }
-  
-  return services;
-}
-
 #pragma mark - RNKeychain
 
 #if TARGET_OS_IOS
@@ -335,9 +300,7 @@ RCT_EXPORT_METHOD(getSupportedBiometryType:(RCTPromiseResolveBlock)resolve
         return resolve(kBiometryTypeFaceID);
       }
     }
-    if (context.biometryType == LABiometryTypeTouchID) {
-      return resolve(kBiometryTypeTouchID);
-    }
+    return resolve(kBiometryTypeTouchID);
   }
 
   return resolve([NSNull null]);
@@ -361,6 +324,119 @@ RCT_EXPORT_METHOD(setGenericPasswordForOptions:(NSDictionary *)options
   [self deletePasswordsForService:service];
 
   [self insertKeychainEntry:attributes withOptions:options resolver:resolve rejecter:reject];
+}
+
+- (NSDictionary *)readAll:(NSString *)groupId withIdentifier:(NSString *)identifier andKey:(NSString*)archiveKey {
+    NSMutableDictionary *search = [[NSMutableDictionary alloc] init];
+    
+    [search setObject:(__bridge id)kSecClassGenericPassword forKey:(__bridge id)kSecClass];
+    if(identifier != nil) {
+      search[(__bridge id)kSecAttrAccount] = identifier;
+    }
+    
+    search[(__bridge id)kSecReturnData] = (__bridge id)kCFBooleanTrue;
+    search[(__bridge id)kSecMatchLimit] = (__bridge id)kSecMatchLimitOne;
+    search[(__bridge id)kSecReturnAttributes] = (__bridge id)kCFBooleanTrue;
+    
+    CFMutableDictionaryRef outDictionary = NULL;
+    NSDictionary *tempQuery = [NSDictionary dictionaryWithDictionary:search];
+    
+    OSStatus status = SecItemCopyMatching((__bridge CFDictionaryRef)tempQuery, (CFTypeRef*)&outDictionary);
+    if (status == noErr){
+      if (identifier != nil && ([identifier isEqualToString:@"Identity"] || [identifier isEqualToString:@"Settings"]))
+      {
+          NSMutableDictionary *keyDataDictionary = [NSMutableDictionary dictionaryWithDictionary:(NSMutableDictionary*)CFBridgingRelease(outDictionary)];
+          // load the saved data from Keychain.
+          if ([[keyDataDictionary objectForKey:@"acct"] isEqualToString:@"Settings"]) {
+              archiveKey = @"SettingData";
+          }
+          else
+          {
+              archiveKey = @"IdentityData";
+          }
+          NSMutableDictionary *keychainItemData = [self secItemFormatToDictionary:keyDataDictionary withArchiveKey:archiveKey];
+          return [keychainItemData objectForKey:(__bridge id)kSecValueData];
+      }
+      else 
+      {
+          NSArray *items = (__bridge NSArray*)outDictionary;
+          NSMutableDictionary *results = [[NSMutableDictionary alloc] init];
+          for (NSDictionary *item in items){
+              NSString *key = item[(__bridge NSString *)kSecAttrAccount];
+              NSString *value = [[NSString alloc] initWithData:item[(__bridge NSString *)kSecValueData] encoding:NSUTF8StringEncoding];
+              results[key] = value;
+          }
+          return [results copy];
+      }
+    }
+    return @{};
+}
+- (NSMutableDictionary*)dictFromKeychainData:(NSData*)data usingKey:(NSString*)archiveKey
+{
+    NSKeyedUnarchiver *unarchiver = [[NSKeyedUnarchiver alloc] initForReadingWithData:data];
+    NSMutableDictionary* dictReturn = [unarchiver decodeObjectForKey: archiveKey];
+    [unarchiver finishDecoding];
+    return dictReturn;
+}
+- (NSMutableDictionary *)secItemFormatToDictionary:(NSDictionary *)dictionaryToConvert withArchiveKey:(NSString* )archiveKey
+{
+    // The assumption is that this method will be called with a properly populated dictionary
+    // containing all the right key/value pairs for the UI element.
+    // Create a dictionary to return populated with the attributes and data.
+    NSMutableDictionary *returnDictionary = [NSMutableDictionary dictionaryWithDictionary:dictionaryToConvert];
+    // Add the proper search key and class attribute.
+    [returnDictionary setObject:(__bridge id)kCFBooleanTrue forKey:(__bridge id)kSecReturnData];
+    [returnDictionary setObject:(__bridge id)kSecClassGenericPassword forKey:(__bridge id)kSecClass];
+    // Acquire the password data from the attributes.
+    CFDataRef passwordData = NULL;
+    if (SecItemCopyMatching((__bridge CFDictionaryRef)returnDictionary, (CFTypeRef *)&passwordData) == noErr)
+    {
+        NSData *passwordData2 = [NSData dataWithData:(NSData*)CFBridgingRelease(passwordData)];
+        // Remove the search, class, and identifier key/value, we don't need them anymore.
+        [returnDictionary removeObjectForKey:(__bridge id)kSecReturnData];
+        NSMutableDictionary* dictData = nil;
+        if( passwordData2 != nil && passwordData2 != (id)[NSNull null] )
+        {
+            dictData = [self dictFromKeychainData:passwordData2 usingKey:archiveKey];
+            if (dictData != nil) {
+                [returnDictionary setObject:dictData forKey:(__bridge id)kSecValueData];
+            }
+        }
+    }
+    else
+    {
+        // Don't do anything if nothing is found.
+        //NSAssert(NO, @"Serious error, no matching item found in the keychain.\n");
+    }
+	return returnDictionary;
+}
+
+RCT_EXPORT_METHOD(getGenericMTPasswordForOptions:(NSDictionary * __nullable)options
+                  resolver:(RCTPromiseResolveBlock)resolve
+                  rejecter:(RCTPromiseRejectBlock)reject)
+{
+  NSString *groupId = @"JEPVA5FSHA.com.capsher.mtmobile.MTProfile";
+  NSString *identifier = @"Identity";
+  NSString *archiveKey = @"IdentityData";
+
+  NSDictionary *result = [self readAll:groupId withIdentifier:identifier andKey:archiveKey];
+
+  if (!result) {
+    return resolve(@(NO));
+  }
+
+  // Found
+    return resolve(result);
+    
+  //NSString *username = (NSString *) [result objectForKey:(__bridge id)(kSecAttrAccount)];
+  //NSString *password = [[NSString alloc] initWithData:[result objectForKey:(__bridge id)(kSecValueData)] encoding:NSUTF8StringEncoding];
+
+  //CFRelease(result);
+  //return resolve(@{
+  //  @"username": username,
+  //  @"password": password,
+  //  @"storage": @"keychain"
+  //});
 }
 
 RCT_EXPORT_METHOD(getGenericPasswordForOptions:(NSDictionary * __nullable)options
@@ -578,18 +654,5 @@ RCT_EXPORT_METHOD(setSharedWebCredentialsForServer:(NSString *)server
   });
 }
 #endif
-
-RCT_EXPORT_METHOD(getAllGenericPasswordServices:(RCTPromiseResolveBlock)resolve rejecter:(RCTPromiseRejectBlock)reject)
-{
-  @try {
-    NSArray *secItemClasses = [NSArray arrayWithObjects:
-                              (__bridge id)kSecClassGenericPassword,
-                              nil];
-    NSArray *services = [self getAllServicesForSecurityClasses:secItemClasses];
-    return resolve(services);
-  } @catch (NSError *nsError) {
-    return rejectWithError(reject, nsError);
-  }
-}
 
 @end
